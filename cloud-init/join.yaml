@@ -1,0 +1,116 @@
+#cloud-config
+
+hostname: ${HOSTNAME}
+manage_etc_hosts: true
+timezone: Europe/Lisbon
+
+users:
+  - name: pi
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIF0LgvmQ2s7H/x3MZ8Frv3XGfNj/6sqIg08tiCWB4Cd
+
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+  - jq
+  - nfs-common
+  - nfs-kernel-server
+  - open-iscsi
+  - unattended-upgrades
+  - watchdog
+
+apt:
+  conf: |
+    APT::Periodic::Update-Package-Lists "1";
+    APT::Periodic::AutocleanInterval "5";
+    APT::Periodic::Unattended-Upgrade "1";
+    APT::Periodic::Verbose "1";
+
+swap:
+  size: 0
+
+write_files:
+  - path: /etc/sysctl.d/99-k3s.conf
+    content: |
+      net.ipv4.ip_forward=1
+      net.bridge.bridge-nf-call-iptables=1
+      kernel.panic=10
+
+  - path: /etc/logrotate.d/k3s
+    content: |
+      /var/log/syslog /var/log/kern.log {
+        rotate 7
+        daily
+        compress
+        missingok
+        notifempty
+      }
+
+  - path: /etc/watchdog.conf
+    content: |
+      watchdog-device = /dev/watchdog
+      max-load-1 = 24
+      interval = 10
+      test-binary = /bin/true
+      test-timeout = 10
+      ping = 1.1.1.1
+      ping = 1.0.0.1
+      logtick = 60
+
+  - path: /etc/k3s-resolv.conf
+    content: |
+      nameserver 1.1.1.1
+      nameserver 1.0.0.1
+
+  - path: /usr/local/bin/setup-k3s.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      wait_for() { local i=0; until "$@" &>/dev/null; do sleep 5; i=$((i+1)); [[ $i -ge 60 ]] && exit 1; done; }
+      retry() {
+        local out=""
+        while [[ -z "$out" ]]; do
+          out=$("$@" 2>/dev/null || true)
+          [[ -z "$out" ]] && sleep 10
+        done
+        echo "$out"
+      }
+      resolve_peer_ip() {
+        tailscale status --json | jq -r --arg h "$1" '.Peer[] | select(.HostName == $h) | .TailscaleIPs[0]'
+      }
+
+      wait_for tailscale status
+      TAILSCALE_IP=$(tailscale ip -4)
+      SERVER_IP=$(retry resolve_peer_ip "${SERVER_HOSTNAME}")
+      K3S_TOKEN=$(retry tailscale ssh "pi@${SERVER_HOSTNAME}" "sudo cat /var/lib/rancher/k3s/server/node-token")
+
+      curl -sfL https://get.k3s.io | sh -s - server \
+        --server "https://${SERVER_IP}:6443" \
+        --token "${K3S_TOKEN}" \
+        --node-ip "${TAILSCALE_IP}" \
+        --node-external-ip "${TAILSCALE_IP}" \
+        --flannel-iface tailscale0 \
+        --write-kubeconfig-mode 0644 \
+        --disable servicelb \
+        --resolv-conf /etc/k3s-resolv.conf \
+        --kubelet-arg "allowed-unsafe-sysctls=net.ipv4.ip_forward"
+
+runcmd:
+  - systemctl enable --now fstrim.timer
+  - rpi-eeprom-config 2>/dev/null | sed 's/^BOOT_ORDER=.*/BOOT_ORDER=0xf416/' > /tmp/boot.conf && rpi-eeprom-config --apply /tmp/boot.conf 2>/dev/null; rm -f /tmp/boot.conf
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - systemctl enable --now tailscaled
+  - tailscale up --authkey=${TAILSCALE_AUTHKEY} --ssh --hostname=${HOSTNAME} || exit 1
+  - /usr/local/bin/setup-k3s.sh
+  - rm -f /var/lib/cloud/instance/user-data.txt
+
+power_state:
+  mode: reboot
+  condition: true
+  timeout: 30
