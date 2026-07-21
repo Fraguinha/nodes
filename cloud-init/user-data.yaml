@@ -1,0 +1,46 @@
+#cloud-config
+
+hostname: __HOSTNAME__
+manage_etc_hosts: true
+timezone: Europe/Lisbon
+
+users:
+  - name: pi
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+__SSH_AUTHORIZED_KEYS__
+
+bootcmd:
+  - until ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; do sleep 2; done
+
+package_update: true
+package_upgrade: true
+packages:
+__PACKAGES__
+
+apt:
+  conf: |
+    Acquire::Retries "5";
+    APT::Periodic::Update-Package-Lists "1";
+    APT::Periodic::AutocleanInterval "5";
+    APT::Periodic::Unattended-Upgrade "1";
+    APT::Periodic::Verbose "1";
+    Unattended-Upgrade::Remove-Unused-Dependencies "true";
+    Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+    Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+
+swap:
+  size: 0
+
+write_files:
+__WRITE_FILES__
+
+runcmd:
+  - /usr/local/bin/setup-node.sh
+
+power_state:
+  mode: reboot
+  condition: test -f /run/nodes-reboot
+  timeout: 30
