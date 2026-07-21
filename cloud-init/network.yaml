@@ -1,0 +1,11 @@
+network:
+  version: __NETWORK_VERSION__
+  ethernets: __ETHERNET_CONFIG__
+  wifis:
+    wlan0:
+      __WIFI_FIELDS__: {}
+      access-points:
+        __WIFI_SSID__:
+          auth:
+            key-management: __WIFI_KEY_MANAGEMENT__
+            password: __WIFI_PASSWORD__

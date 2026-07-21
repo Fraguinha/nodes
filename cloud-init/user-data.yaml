@@ -1,0 +1,46 @@
+#cloud-config
+
+hostname: __HOSTNAME__
+manage_etc_hosts: true
+timezone: __TIMEZONE__
+
+users:
+  - name: pi
+    groups: __PI_GROUPS__
+    shell: __PI_SHELL__
+    sudo: __PI_SUDO__
+    ssh_authorized_keys:
+__SSH_AUTHORIZED_KEYS__
+
+chpasswd:
+  expire: __ROOT_EXPIRE__
+  users:
+    - name: root
+      password: __ROOT_PASSWORD__
+      type: hash
+
+bootcmd:
+  - until ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; do sleep 2; done
+
+package_update: __PACKAGE_UPDATE__
+package_upgrade: __PACKAGE_UPGRADE__
+packages:
+__PACKAGES__
+
+apt:
+  conf: |
+__APT_CONF__
+
+swap:
+  size: __SWAP_SIZE__
+
+write_files:
+__WRITE_FILES__
+
+runcmd:
+  - /usr/local/bin/setup-node.sh
+
+power_state:
+  mode: reboot
+  condition: test -f /run/nodes-reboot
+  timeout: 30
