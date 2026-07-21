@@ -1,0 +1,135 @@
+#cloud-config
+
+hostname: ${HOSTNAME}
+manage_etc_hosts: true
+timezone: Europe/Lisbon
+
+users:
+  - name: pi
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIF0LgvmQ2s7H/x3MZ8Frv3XGfNj/6sqIg08tiCWB4Cd
+
+bootcmd:
+  - until ping -c1 -W2 1.1.1.1 &>/dev/null; do sleep 2; done
+
+package_update: true
+package_upgrade: true
+packages:
+  - bluez
+  - curl
+  - jq
+  - nfs-common
+  - nfs-kernel-server
+  - open-iscsi
+  - unattended-upgrades
+
+apt:
+  conf: |
+    APT::Periodic::Update-Package-Lists "1";
+    APT::Periodic::AutocleanInterval "5";
+    APT::Periodic::Unattended-Upgrade "1";
+    APT::Periodic::Verbose "1";
+    Unattended-Upgrade::Remove-Unused-Dependencies "true";
+    Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+    Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+
+swap:
+  size: 0
+
+write_files:
+  - path: /etc/systemd/system/k3s-flannel-monitor.service
+    content: |
+      [Unit]
+      Description=Restart k3s if flannel.1 is missing
+
+      [Service]
+      Type=oneshot
+      ExecCondition=/bin/sh -c 'systemctl is-active k3s && ! ip link show flannel.1 >/dev/null 2>&1'
+      ExecStart=/bin/systemctl restart k3s
+
+  - path: /etc/systemd/system/k3s-flannel-monitor.timer
+    content: |
+      [Unit]
+      Description=Check flannel.1 every 30s
+
+      [Timer]
+      OnBootSec=120
+      OnUnitActiveSec=30
+
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/k3s-resolv.conf
+    content: |
+      nameserver 1.1.1.1
+      nameserver 1.0.0.1
+
+  - path: /etc/systemd/system/k3s.service.d/restart-after-tailscale.conf
+    content: |
+      [Unit]
+      BindsTo=tailscaled.service
+      After=tailscaled.service
+
+  - path: /etc/sops/age/keys.txt
+    permissions: "0600"
+    encoding: b64
+    content: ${SOPS_AGE_KEY_B64}
+
+  - path: /usr/local/bin/setup-cluster.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      wait_for() { until "$@" &>/dev/null; do sleep 5; done; }
+
+      wait_for tailscale status
+      TAILSCALE_IP=$(tailscale ip -4)
+
+      curl -sfL https://get.k3s.io | sh -s - server \
+        --cluster-init \
+        --node-ip "${TAILSCALE_IP}" \
+        --node-external-ip "${TAILSCALE_IP}" \
+        --flannel-iface tailscale0 \
+        --write-kubeconfig-mode 0644 \
+        --disable servicelb \
+        --resolv-conf /etc/k3s-resolv.conf \
+        --kubelet-arg "allowed-unsafe-sysctls=net.ipv4.ip_forward" \
+        --etcd-arg heartbeat-interval=500 \
+        --etcd-arg election-timeout=5000 \
+        --tls-san "${TAILSCALE_IP}" \
+        --tls-san "${HOSTNAME}.local"
+
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      wait_for kubectl get nodes
+
+      kubectl create namespace flux-system --dry-run=client -o yaml | kubectl apply -f -
+      kubectl create secret generic sops-age \
+        --namespace=flux-system \
+        --from-file=age.agekey=/etc/sops/age/keys.txt \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+      curl -s https://fluxcd.io/install.sh | bash
+      flux bootstrap github \
+        --owner=Fraguinha \
+        --repository=flux \
+        --branch=main \
+        --path=clusters/k8s-cluster \
+        --personal
+
+runcmd:
+  - until ping -c1 -W2 1.1.1.1 &>/dev/null; do sleep 5; done
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - systemctl enable --now tailscaled
+  - tailscale up --authkey=${TAILSCALE_AUTHKEY} --ssh --hostname=${HOSTNAME} || exit 1
+  - GITHUB_TOKEN=${GITHUB_TOKEN} /usr/local/bin/setup-cluster.sh
+  - systemctl enable --now k3s-flannel-monitor.timer
+  - rm -f /var/lib/cloud/instance/user-data.txt
+
+power_state:
+  mode: reboot
+  condition: true
+  timeout: 30
