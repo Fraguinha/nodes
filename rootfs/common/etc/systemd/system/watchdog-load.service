@@ -1,0 +1,14 @@
+[Unit]
+Description=Load a watchdog device
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=sysinit.target
+ConditionPathExists=!/dev/watchdog0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/watchdog-load.sh
+
+[Install]
+WantedBy=sysinit.target
