@@ -1,0 +1,17 @@
+etcd-arg:
+  - "heartbeat-interval=500"
+  - "election-timeout=5000"
+  - "snapshot-catchup-entries=100000"
+
+kube-controller-manager-arg:
+  - "leader-elect-lease-duration=60s"
+  - "leader-elect-renew-deadline=40s"
+  - "leader-elect-retry-period=10s"
+kube-scheduler-arg:
+  - "leader-elect-lease-duration=60s"
+  - "leader-elect-renew-deadline=40s"
+  - "leader-elect-retry-period=10s"
+kube-cloud-controller-manager-arg:
+  - "leader-elect-lease-duration=60s"
+  - "leader-elect-renew-deadline=40s"
+  - "leader-elect-retry-period=10s"
