@@ -1,0 +1,21 @@
+network:
+  version: 2
+  ethernets:
+    ethernet:
+      match:
+        name: "e*"
+      dhcp4: true
+      optional: true
+      dhcp4-overrides:
+        route-metric: 200
+  wifis:
+    wlan0:
+      dhcp4: true
+      optional: true
+      dhcp4-overrides:
+        route-metric: 100
+      access-points:
+        __WIFI_SSID__:
+          auth:
+            key-management: psk
+            password: __WIFI_PASSWORD__

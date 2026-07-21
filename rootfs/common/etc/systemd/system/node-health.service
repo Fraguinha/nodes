@@ -1,0 +1,7 @@
+[Unit]
+Description=Check node health
+After=tailscaled.service k3s.service k3s-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/node-health-check.sh
