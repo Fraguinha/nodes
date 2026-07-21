@@ -1,0 +1,12 @@
+[Unit]
+Description=Check node health every 15 seconds
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=15s
+AccuracySec=1s
+RandomizedDelaySec=5s
+Unit=node-health.service
+
+[Install]
+WantedBy=timers.target
