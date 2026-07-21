@@ -1,0 +1,13 @@
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      optional: true
+  wifis:
+    wlan0:
+      dhcp4: true
+      optional: true
+      access-points:
+        "SSSA":
+          password: "9dea540b557be2dd2facbdbf74ed2e16e5933b13415498a9a3483a632bffb5c6"
