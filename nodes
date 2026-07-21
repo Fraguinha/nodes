@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+import sys
+
+from lib.commands import down_command, flash_command, sync_command, up_command
+from lib.common import die, prompt
+
+USAGE = """Usage: nodes [command] [options]
+
+Run without a command for the guided workflow.
+
+Commands:
+  provision [physical|cloud]  Provision a node
+  remove                      Drain and delete a cloud node
+  sync [--yes] HOSTNAME...    Re-provision existing nodes from cloud-init, one at a time
+  help                        Show this help
+"""
+
+
+def provision_command(arguments):
+    target = arguments[0] if arguments else ""
+    if target in ("--help", "-h"):
+        print("""Usage: nodes provision [physical|cloud] [options]
+
+Choose a target interactively or use:
+  nodes provision physical --help
+  nodes provision cloud --help""")
+        return
+    if target in ("physical", "cloud"):
+        arguments = arguments[1:]
+    elif target and not target.startswith("--"):
+        die("target must be 'physical' or 'cloud'")
+    else:
+        target = prompt("Target (physical/cloud): ")
+    if target == "physical":
+        flash_command(arguments)
+    elif target == "cloud":
+        up_command(arguments)
+    else:
+        die("target must be 'physical' or 'cloud'")
+
+
+def main(arguments):
+    if not arguments:
+        print("""What would you like to do?
+
+  1) Provision a physical node
+  2) Provision a cloud node
+  3) Remove a cloud node
+  4) Sync existing nodes""")
+        choice = prompt("Select [1-4]: ")
+        if choice in ("1", "2"):
+            arguments = ["provision", "physical" if choice == "1" else "cloud"]
+        elif choice == "3":
+            arguments = ["remove"]
+        elif choice == "4":
+            arguments = ["sync", *prompt("Hostnames: ").split()]
+        else:
+            die("invalid selection")
+    command, arguments = arguments[0], arguments[1:]
+    if command == "provision":
+        provision_command(arguments)
+    elif command in ("remove", "down"):
+        down_command(arguments)
+    elif command == "sync":
+        sync_command(arguments)
+    elif command in ("help", "--help", "-h"):
+        print(USAGE, end="")
+    else:
+        print(USAGE, end="", file=sys.stderr)
+        die("unknown command '" + command + "'")
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except KeyboardInterrupt:
+        raise SystemExit(130)

@@ -1,0 +1,8 @@
+[Unit]
+Description=Check node health
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/node-health-check.py
+TimeoutStartSec=60s

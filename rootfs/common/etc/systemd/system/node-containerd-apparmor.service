@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare version-scoped containerd AppArmor profile
+After=local-fs.target apparmor.service
+Before=k3s.service k3s-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/node-containerd-apparmor.py
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

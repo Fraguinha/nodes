@@ -1,0 +1,32 @@
+{
+  "fraguinha": {
+    "platform": "physical",
+    "role": "join",
+    "server": "a50passos"
+  },
+  "a50passos": {
+    "platform": "physical",
+    "role": "join",
+    "server": "livinvicta"
+  },
+  "livinvicta": {
+    "platform": "physical",
+    "role": "join",
+    "server": "a50passos"
+  },
+  "carolion": {
+    "platform": "physical",
+    "role": "agent",
+    "server": "a50passos"
+  },
+  "cloud-1": {
+    "platform": "cloud",
+    "role": "join",
+    "server": "livinvicta"
+  },
+  "cloud-2": {
+    "platform": "cloud",
+    "role": "join",
+    "server": "livinvicta"
+  }
+}
