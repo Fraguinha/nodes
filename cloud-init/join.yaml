@@ -132,6 +132,7 @@ write_files:
 
       wait_for tailscale status
       TAILSCALE_IP=$(tailscale ip -4)
+      LAN_IP=$(ip -4 route get 1.1.1.1 | sed -n 's/.*[[:space:]]src[[:space:]]\([0-9.]\+\).*/\1/p')
       SERVER_IP=$(retry resolve_peer_ip "${SERVER_HOSTNAME}")
       K3S_TOKEN=$(retry ssh -o StrictHostKeyChecking=no "pi@${SERVER_IP}" "sudo cat /var/lib/rancher/k3s/server/node-token")
 
@@ -147,7 +148,10 @@ write_files:
         --resolv-conf /etc/k3s-resolv.conf \
         --kubelet-arg "allowed-unsafe-sysctls=net.ipv4.ip_forward" \
         --etcd-arg heartbeat-interval=500 \
-        --etcd-arg election-timeout=5000
+        --etcd-arg election-timeout=5000 \
+        --tls-san "${TAILSCALE_IP}" \
+        --tls-san "${LAN_IP}" \
+        --tls-san "${HOSTNAME}.local"
 
 runcmd:
   - until ping -c1 -W2 1.1.1.1 &>/dev/null; do sleep 5; done
