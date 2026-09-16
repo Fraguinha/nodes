@@ -62,6 +62,16 @@ write_files:
       [Link]
       Name=wlan0
 
+  - path: /etc/udev/rules.d/70-wifi-powersave-off.rules
+    content: |
+      ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan0", RUN+="/usr/sbin/iw dev wlan0 set power_save off"
+
+  - path: /etc/chrony/conf.d/ip-fallback.conf
+    content: |
+      server 162.159.200.1 iburst
+      server 162.159.200.123 iburst
+      makestep 1.0 3
+
   - path: /etc/systemd/system/k3s.service.d/restart-after-tailscale.conf
     content: |
       [Unit]
