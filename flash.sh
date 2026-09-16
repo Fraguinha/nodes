@@ -55,10 +55,10 @@ fi
 
 read -rp "Hostname: " HOSTNAME
 [[ -n "$HOSTNAME" ]] || die "hostname is required"
-read -rp "Role (init/join): " ROLE
-[[ "$ROLE" == "init" || "$ROLE" == "join" ]] || die "role must be 'init' or 'join'"
+read -rp "Role (init/join/agent): " ROLE
+[[ "$ROLE" == "init" || "$ROLE" == "join" || "$ROLE" == "agent" ]] || die "role must be 'init', 'join' or 'agent'"
 
-if [[ "$ROLE" == "join" ]]; then
+if [[ "$ROLE" == "join" || "$ROLE" == "agent" ]]; then
   read -rp "Server Tailscale hostname: " SERVER_HOSTNAME
   [[ -n "$SERVER_HOSTNAME" ]] || die "server hostname is required"
 fi
@@ -78,7 +78,7 @@ echo "  Disk:     $DISK"
 echo "  Arch:     $ARCH"
 echo "  Hostname: $HOSTNAME"
 echo "  Role:     $ROLE"
-[[ "$ROLE" == "join" ]] && echo "  Server:   $SERVER_HOSTNAME"
+[[ "$ROLE" == "join" || "$ROLE" == "agent" ]] && echo "  Server:   $SERVER_HOSTNAME"
 echo ""
 read -rp "Proceed? [y/N]: " confirm
 [[ "$confirm" == [yY] ]] || { echo "Aborted."; exit 1; }
