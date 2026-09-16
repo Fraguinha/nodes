@@ -157,6 +157,7 @@ else
   diskutil mount "$SEED_PART"
   cp "$CACHE_DIR/user-data" /Volumes/CIDATA/user-data
   cp "$CACHE_DIR/meta-data" /Volumes/CIDATA/meta-data
+  cp "$SCRIPT_DIR/cloud-init/network.yaml" /Volumes/CIDATA/network-config
   diskutil eject "$DISK"
 
   rm -f "$CACHE_DIR/user-data" "$CACHE_DIR/meta-data"

@@ -19,11 +19,14 @@ package_update: true
 package_upgrade: true
 packages:
   - curl
+  - iw
   - jq
+  - linux-firmware-realtek
   - nfs-common
   - nfs-kernel-server
   - open-iscsi
   - unattended-upgrades
+  - wpasupplicant
 
 apt:
   conf: |
@@ -50,6 +53,14 @@ write_files:
       net.core.wmem_max=7340032
       fs.inotify.max_user_instances=512
       fs.inotify.max_user_watches=65536
+
+  - path: /etc/systemd/network/10-wlan0.link
+    content: |
+      [Match]
+      Type=wlan
+
+      [Link]
+      Name=wlan0
 
   - path: /etc/systemd/system/k3s.service.d/restart-after-tailscale.conf
     content: |
