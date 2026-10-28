@@ -52,7 +52,7 @@ render_authorized_keys() {
 render_packages() {
   local platform="$1"
   local package=""
-  local common_packages=(chrony curl jq nfs-common nfs-kernel-server open-iscsi unattended-upgrades)
+  local common_packages=(chrony coreutils curl iproute2 iputils-ping jq nfs-common nfs-kernel-server open-iscsi unattended-upgrades util-linux)
   local physical_packages=(bluez iw linux-firmware-realtek wpasupplicant)
 
   for package in "${common_packages[@]}"; do

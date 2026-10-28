@@ -2,8 +2,8 @@
 set -euo pipefail
 
 CLUSTER_PEER_CACHE=/var/lib/node-health/cluster-peer-ips
-TAILSCALE_FAILURE_DEADLINE_STATE=/run/node-health.tailscale-failure-deadline
-TAILSCALE_RECOVERY_ATTEMPTED_STATE=/run/node-health.tailscale-recovery-attempted
+TAILSCALE_FAILURE_DEADLINE_STATE=${NODE_HEALTH_RUN_DIR:-/run}/node-health.tailscale-failure-deadline
+TAILSCALE_RECOVERY_ATTEMPTED_STATE=${NODE_HEALTH_RUN_DIR:-/run}/node-health.tailscale-recovery-attempted
 TAILSCALE_FAILURE_DELAY=300
 TAILSCALE_MAX_PROBES=5
 K3S_FLANNEL_STARTUP_GRACE=180
@@ -137,6 +137,11 @@ schedule_tailscale_recovery() {
   logger -t node-health "$reason persisted through the recovery deadline; restarting tailscaled once"
   systemctl --no-block restart tailscaled.service || true
 }
+
+if ! node-wifi-recovery.sh; then
+  reset_tailscale_failure
+  exit 0
+fi
 
 if ! systemctl is-active --quiet tailscaled.service; then
   logger -t node-health "tailscaled is inactive; requesting a start"
