@@ -17,6 +17,8 @@ COMMON = (
     "usr/local/bin/watchdog-load.sh",
     "usr/local/bin/setup-node.sh",
     "usr/local/bin/node-configure.py",
+    "usr/local/bin/node-containerd-apparmor.py",
+    "usr/local/share/nodes/containerd-v2.3.7-k3s1.apparmor",
     "usr/local/share/nodes/k3s-server-ha.yaml",
     "usr/local/share/nodes/node-policy.json",
     "usr/local/share/nodes/nvidia-container-toolkit.asc",
@@ -26,6 +28,9 @@ COMMON = (
     "etc/systemd/system/node-health.service",
     "etc/systemd/system/node-health.timer",
     "etc/systemd/system/watchdog-load.service",
+    "etc/systemd/system/node-containerd-apparmor.service",
+    "etc/systemd/system/k3s.service.d/10-apparmor.conf",
+    "etc/systemd/system/k3s-agent.service.d/10-apparmor.conf",
     "etc/systemd/system/tailscaled.service.d/wait-for-time-sync.conf",
     "etc/systemd/system/tailscaled.service.d/10-oom.conf",
     "etc/systemd/system/k3s.service.d/restart-after-tailscale.conf",
@@ -629,7 +634,7 @@ if name == "python3":
 if name == "systemd-analyze":
     import configparser
 
-    if args[:2] != ["verify", "--man=no"] or len(args) != 5:
+    if args[:2] != ["verify", "--man=no"] or len(args) != 6:
         fail("Unexpected unit validation")
     for value in args[2:]:
         path = safe(value)
@@ -1591,7 +1596,7 @@ class NodeFullSyncTest(unittest.TestCase):
         self.assertEqual(list((fixture.root / "run").iterdir()), [])
 
     def test_invalid_script_policy_and_units_never_reach_runtime_apply(self):
-        for kind in ("script", "python", "json", "unit", "dropin", "link", "upload"):
+        for kind in ("script", "python", "apparmor-python", "json", "unit", "apparmor-unit", "dropin", "link", "upload"):
             with self.subTest(kind=kind):
                 fixture = self.fixture(
                     platform="physical" if kind == "link" else "cloud",
@@ -1599,10 +1604,14 @@ class NodeFullSyncTest(unittest.TestCase):
                 )
                 if kind == "python":
                     (fixture.repository / "rootfs/common/usr/local/bin/node-configure.py").write_text("if then\n")
+                elif kind == "apparmor-python":
+                    (fixture.repository / "rootfs/common/usr/local/bin/node-containerd-apparmor.py").write_text("if then\n")
                 elif kind == "json":
                     (fixture.repository / "rootfs/common/usr/local/share/nodes/node-policy.json").write_text("{broken\n")
                 elif kind == "unit":
                     (fixture.repository / "rootfs/common/etc/systemd/system/node-health.timer").write_text("[Timer\nbroken\n")
+                elif kind == "apparmor-unit":
+                    (fixture.repository / "rootfs/common/etc/systemd/system/node-containerd-apparmor.service").write_text("[Service\nbroken\n")
                 elif kind == "dropin":
                     (fixture.repository / "rootfs/common/etc/systemd/system/k3s.service.d/restart-after-tailscale.conf").write_text("[Unit\nbroken\n")
                 elif kind == "link":

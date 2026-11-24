@@ -857,6 +857,8 @@ sync_full() {
     usr/local/bin/watchdog-load.sh
     usr/local/bin/setup-node.sh
     usr/local/bin/node-configure.py
+    usr/local/bin/node-containerd-apparmor.py
+    usr/local/share/nodes/containerd-v2.3.7-k3s1.apparmor
     usr/local/share/nodes/k3s-server-ha.yaml
     usr/local/share/nodes/node-policy.json
     usr/local/share/nodes/nvidia-container-toolkit.asc
@@ -866,6 +868,9 @@ sync_full() {
     etc/systemd/system/node-health.service
     etc/systemd/system/node-health.timer
     etc/systemd/system/watchdog-load.service
+    etc/systemd/system/node-containerd-apparmor.service
+    etc/systemd/system/k3s.service.d/10-apparmor.conf
+    etc/systemd/system/k3s-agent.service.d/10-apparmor.conf
     etc/systemd/system/tailscaled.service.d/wait-for-time-sync.conf
     etc/systemd/system/tailscaled.service.d/10-oom.conf
     etc/systemd/system/k3s.service.d/restart-after-tailscale.conf
@@ -1463,6 +1468,9 @@ for asset in "${assets[@]}"; do
     "$stage/$asset" "$work/desired/$asset"
   case "$asset" in
     usr/local/bin/*.sh) bounded bash -n "$work/desired/$asset" ;;
+    usr/local/bin/*.py)
+      bounded python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$work/desired/$asset"
+      ;;
     etc/systemd/*)
       bounded python3 -c \
         'import configparser,sys; p=configparser.ConfigParser(strict=False,interpolation=None); p.read_file(open(sys.argv[1]))' \
@@ -1470,8 +1478,6 @@ for asset in "${assets[@]}"; do
       ;;
   esac
 done
-bounded python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' \
-  "$work/desired/usr/local/bin/node-configure.py"
 bounded python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
   "$work/desired/usr/local/share/nodes/node-policy.json"
 authorized_keys_match "$work/desired/authorized_keys" || exit 1
@@ -1537,7 +1543,8 @@ verify_units() {
   if ! bounded systemd-analyze verify --man=no \
     "$work/desired/etc/systemd/system/node-health.service" \
     "$work/desired/etc/systemd/system/node-health.timer" \
-    "$work/desired/etc/systemd/system/watchdog-load.service" > "$work/unit-validation" 2>&1; then
+    "$work/desired/etc/systemd/system/watchdog-load.service" \
+    "$work/desired/etc/systemd/system/node-containerd-apparmor.service" > "$work/unit-validation" 2>&1; then
     printf 'Invalid staged node units\n' >&2
     return 1
   fi

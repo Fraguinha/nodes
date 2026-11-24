@@ -54,6 +54,8 @@ ASSETS = {
     "/usr/local/bin/watchdog-load.sh": 0o755,
     "/usr/local/bin/node-health-check.sh": 0o755,
     "/usr/local/bin/node-wifi-recovery.sh": 0o755,
+    "/usr/local/bin/node-containerd-apparmor.py": 0o755,
+    "/usr/local/share/nodes/containerd-v2.3.7-k3s1.apparmor": 0o644,
     POLICY_PATH: 0o644,
     HA_TEMPLATE: 0o644,
     NVIDIA_KEY: 0o644,
@@ -67,6 +69,9 @@ ASSETS = {
     "/etc/systemd/system/watchdog-load.service": 0o644,
     "/etc/systemd/system/node-health.service": 0o644,
     "/etc/systemd/system/node-health.timer": 0o644,
+    "/etc/systemd/system/node-containerd-apparmor.service": 0o644,
+    "/etc/systemd/system/k3s.service.d/10-apparmor.conf": 0o644,
+    "/etc/systemd/system/k3s-agent.service.d/10-apparmor.conf": 0o644,
     "/etc/systemd/system/tailscaled.service.d/wait-for-time-sync.conf": 0o644,
     "/etc/systemd/system/tailscaled.service.d/10-oom.conf": 0o644,
     "/etc/systemd/system/ssh.service.d/10-oom.conf": 0o644,
@@ -793,6 +798,19 @@ class Reconciler:
         else:
             dependencies = "tailscaled.service" in k3s.get("After", "").split() and "tailscaled.service" in k3s.get("PartOf", "").split()
             self.report("k3s-dependency", "match" if dependencies else "drift")
+
+    def apparmor(self):
+        helper = "/usr/local/bin/node-containerd-apparmor.py"
+        unit = "node-containerd-apparmor.service"
+        if not self.check:
+            self.command(["systemctl", "daemon-reload"])
+            self.command(["systemctl", "enable", unit])
+            self.command(["systemctl", "start", unit], timeout=185)
+        state = self.properties(unit, ["UnitFileState"])
+        result = self.command([helper, "--check"], timeout=130, required=False)
+        matched = state.get("UnitFileState") == "enabled" and result.returncode == 0
+        self.report("containerd-apparmor", "match" if matched else "drift",
+                    None if matched else "version-scoped AppArmor preparation is not enabled or verified")
 
     def oom(self):
         for unit, name in (("tailscaled.service", "tailscaled"), ("ssh.service", "sshd")):
@@ -2012,7 +2030,7 @@ class Reconciler:
             ("managed-files", self.assets), ("apt", self.apt), ("packages", self.packages),
             ("nvidia", self.nvidia),
             ("accounts", self.accounts), ("timezone", self.timezone), ("swap", self.swap),
-            ("sysctls", self.sysctls), ("systemd", self.systemd), ("oom", self.oom),
+            ("sysctls", self.sysctls), ("systemd", self.systemd), ("containerd-apparmor", self.apparmor), ("oom", self.oom),
             ("tailscale", self.tailscale), ("multipath", self.multipath),
             ("watchdog", self.watchdog), ("logging", self.logging),
             ("ha", self.ha), ("network", self.network), ("k3s", self.k3s),
