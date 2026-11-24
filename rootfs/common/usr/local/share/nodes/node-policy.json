@@ -11,7 +11,8 @@
   "root": {"password": "!", "expire": false},
   "packages": {
     "common": ["chrony", "curl", "jq", "nfs-common", "nfs-kernel-server", "open-iscsi", "unattended-upgrades"],
-    "physical": ["bluez", "iw", "linux-firmware-realtek", "wpasupplicant"]
+    "physical": ["bluez", "iw", "linux-firmware-realtek", "wpasupplicant"],
+    "nvidia": ["linux-modules-nvidia-580-server-generic", "nvidia-headless-no-dkms-580-server", "nvidia-utils-580-server", "nvidia-container-toolkit"]
   },
   "apt": {
     "package_update": true,

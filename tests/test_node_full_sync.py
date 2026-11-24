@@ -19,6 +19,8 @@ COMMON = (
     "usr/local/bin/node-configure.py",
     "usr/local/share/nodes/k3s-server-ha.yaml",
     "usr/local/share/nodes/node-policy.json",
+    "usr/local/share/nodes/nvidia-container-toolkit.asc",
+    "usr/local/share/nodes/nvidia-udev.rules",
     "etc/k3s-resolv.conf",
     "etc/chrony/conf.d/ip-fallback.conf",
     "etc/systemd/system/node-health.service",

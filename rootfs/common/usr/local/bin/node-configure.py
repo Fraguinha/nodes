@@ -37,6 +37,16 @@ HA_TEMPLATE = "/usr/local/share/nodes/k3s-server-ha.yaml"
 CHRONY_PATH = "/etc/chrony/conf.d/ip-fallback.conf"
 CHRONY_PENDING_DIR = "/var/lib/nodes/chrony-pending"
 CHRONY_PROGRESS_PATH = "/var/lib/nodes/chrony-pending-progress.json"
+NVIDIA_KEY = "/usr/local/share/nodes/nvidia-container-toolkit.asc"
+NVIDIA_SOURCE = "/etc/apt/sources.list.d/nvidia-container-toolkit.sources"
+NVIDIA_RULES = "/etc/udev/rules.d/71-nvidia.rules"
+NVIDIA_RULES_TEMPLATE = "/usr/local/share/nodes/nvidia-udev.rules"
+NVIDIA_SOURCE_CONTENT = (
+    "Types: deb\n"
+    "URIs: https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH)\n"
+    "Suites: /\n"
+    "Signed-By: " + NVIDIA_KEY + "\n"
+)
 NETPLAN_UMASK = 0o022
 ASSETS = {
     "/usr/local/bin/node-configure.py": 0o755,
@@ -46,6 +56,8 @@ ASSETS = {
     "/usr/local/bin/node-wifi-recovery.sh": 0o755,
     POLICY_PATH: 0o644,
     HA_TEMPLATE: 0o644,
+    NVIDIA_KEY: 0o644,
+    NVIDIA_RULES_TEMPLATE: 0o644,
     CHRONY_PATH: 0o644,
     "/etc/k3s-resolv.conf": 0o644,
     "/etc/sysctl.d/99-tailscale.conf": 0o644,
@@ -175,11 +187,14 @@ def load_policy(path):
         raise PolicyError("invalid required groups")
     if not re.fullmatch(r"/[A-Za-z0-9/_-]+", user["shell"]) or user["sudo"] != "ALL=(ALL) NOPASSWD:ALL":
         raise PolicyError("unsupported shell or sudo policy")
-    if set(policy["packages"]) != {"common", "physical"}:
+    if not isinstance(policy["packages"], dict) or set(policy["packages"]) != {"common", "physical", "nvidia"}:
         raise PolicyError("invalid package policy")
     for packages in policy["packages"].values():
         if not isinstance(packages, list) or not packages or not all(isinstance(package, str) and re.fullmatch(r"[a-z0-9][a-z0-9+.-]+", package) for package in packages):
             raise PolicyError("invalid required packages")
+    nvidia = policy["packages"]["nvidia"]
+    if len([package for package in nvidia if re.fullmatch(r"linux-modules-nvidia-[0-9]+-server-generic", package)]) != 1 or any("-open" in package for package in nvidia):
+        raise PolicyError("unsupported NVIDIA driver package policy")
     apt = policy["apt"]
     if set(apt) != {"package_update", "package_upgrade", "conf"} or not all(isinstance(apt[key], bool) for key in ("package_update", "package_upgrade")):
         raise PolicyError("invalid APT policy")
@@ -367,6 +382,7 @@ class Reconciler:
         self.policy = None
         self.ha_changed = False
         self.k3s_ready = False
+        self.nvidia_enabled = False
 
     def target(self, path):
         return ROOT / path.lstrip("/")
@@ -488,24 +504,126 @@ class Reconciler:
         parity = all(effective.get(key) == value for key, value in conf.items())
         self.report("apt", "drift" if not parity or self.check and changed else "match", "owned APT configuration or effective precedence differs" if not parity or self.check and changed else None)
 
+    def missing_packages(self, required):
+        result = self.command(["dpkg-query", "-W", "-f=${Package}\t${db:Status-Status}\n", *required], required=False)
+        if result.returncode not in (0, 1):
+            raise PolicyError("package inventory unavailable")
+        installed = {fields[0] for line in result.stdout.splitlines() if len(fields := line.split("\t")) == 2 and fields[1] == "installed"}
+        return [package for package in required if package not in installed]
+
+    def install_packages(self, absent, update=False):
+        if self.check or not absent and not update:
+            return
+        if not any(record["item"] == "root-lock-expiry" and record["state"] == "match" for record in self.records):
+            raise PolicyError("root lock and nonexpired password must be proved before package post-install scripts")
+        environment = {"DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_MODE": "l"}
+        options = ["-o", "DPkg::Lock::Timeout=30", "-o", "Acquire::http::Timeout=15", "-o", "Acquire::https::Timeout=15"]
+        self.command(["apt-get", *options, "update"], timeout=300, env=environment)
+        if absent:
+            self.command(["apt-get", *options, "-o", "Dpkg::Options::=--force-confold", "install", "--yes", "--no-upgrade", "--no-remove", *absent], timeout=900, env=environment)
+
     def packages(self):
         required = self.policy["packages"]["common"] + (self.policy["packages"]["physical"] if self.platform == "physical" else [])
-        def missing():
-            result = self.command(["dpkg-query", "-W", "-f=${Package}\t${db:Status-Status}\n", *required], required=False)
-            if result.returncode not in (0, 1):
-                raise PolicyError("package inventory unavailable")
-            installed = {fields[0] for line in result.stdout.splitlines() if len(fields := line.split("\t")) == 2 and fields[1] == "installed"}
-            return [package for package in required if package not in installed]
-        absent = missing()
+        absent = self.missing_packages(required)
         if absent and not self.check:
-            if not any(record["item"] == "root-lock-expiry" and record["state"] == "match" for record in self.records):
-                raise PolicyError("root lock and nonexpired password must be proved before package post-install scripts")
-            environment = {"DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_MODE": "l"}
-            options = ["-o", "DPkg::Lock::Timeout=30", "-o", "Acquire::http::Timeout=15", "-o", "Acquire::https::Timeout=15"]
-            self.command(["apt-get", *options, "update"], timeout=300, env=environment)
-            self.command(["apt-get", *options, "-o", "Dpkg::Options::=--force-confold", "install", "--yes", "--no-upgrade", "--no-remove", *absent], timeout=900, env=environment)
-            absent = missing()
+            self.install_packages(absent)
+            absent = self.missing_packages(required)
         self.report("packages", "drift" if absent else "match", "required packages missing" if absent else None)
+
+    def nvidia_devices(self):
+        devices = []
+        for path in sorted(self.target("/sys/bus/pci/devices").glob("*")):
+            if read_text(path / "vendor").strip() == "0x10de" and read_text(path / "class").strip().startswith("0x03"):
+                devices.append(path)
+        return devices
+
+    def nvidia_kernel_network(self, running):
+        kernels = []
+        for path in self.target("/boot").glob("vmlinuz-*"):
+            version = path.name.removeprefix("vmlinuz-")
+            if path.is_file() and re.fullmatch(r"[0-9]+(?:\.[0-9]+)+-[0-9]+-[a-z0-9-]+", version):
+                kernels.append(version)
+        if not kernels:
+            raise PolicyError("installed bootable kernel inventory unavailable")
+        def version_key(version):
+            return tuple(int(value) for value in re.findall(r"[0-9]+", version))
+        newest = max(kernels, key=version_key)
+        extras = []
+        if not self.missing_packages(["linux-modules-extra-" + running]):
+            extras = ["linux-modules-extra-" + version for version in kernels if version_key(version) > version_key(running)]
+        absent = self.missing_packages(extras) if extras else []
+        if absent and not self.check:
+            self.install_packages(absent)
+            absent = self.missing_packages(extras)
+        routes = json.loads(self.command(["ip", "-j", "-4", "route", "show", "default"]).stdout)
+        devices = {route.get("dev") for route in routes}
+        if not devices or any(not isinstance(device, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]+", device) or device in (".", "..") for device in devices):
+            raise PolicyError("default-route network interface unavailable; reboot safety unproved")
+        for device in sorted(devices):
+            path = self.target("/sys/class/net/" + device + "/device/driver/module")
+            if not path.is_symlink():
+                raise PolicyError("default-route driver module unavailable for " + device + "; reboot safety unproved")
+            module = Path(os.readlink(path)).name
+            if not re.fullmatch(r"[A-Za-z0-9_]+", module):
+                raise PolicyError("default-route driver module identity unsupported")
+            if self.command(["modinfo", "-k", newest, module], required=False).returncode:
+                self.report("nvidia-kernel-network", "drift", "default-route module " + module + " missing for newest kernel " + newest + "; reboot would risk network loss")
+                return False
+        self.report("nvidia-kernel-network", "drift" if absent else "match", "newer kernels lack required extra modules" if absent else None)
+        return not absent
+
+    def nvidia_driver(self, devices, rules_changed=False):
+        unbound = [path for path in devices if not (path / "driver").is_symlink() or Path(os.readlink(path / "driver")).name != "nvidia"]
+        if not self.check and (unbound or rules_changed):
+            if not rules_changed:
+                self.command(["udevadm", "control", "--reload-rules"])
+            for path in unbound:
+                (path / "driver_override").write_text("nvidia\n")
+                if (path / "driver").is_symlink():
+                    (path / "driver/unbind").write_text(path.name + "\n")
+            if unbound and self.target("/sys/module/nouveau").exists():
+                self.command(["rmmod", "nouveau"])
+            self.command(["modprobe", "nvidia"])
+            self.command(["modprobe", "nvidia_uvm"])
+            self.command(["systemctl", "restart", "nvidia-persistenced.service"], timeout=30)
+            self.command(["systemctl", "restart", "nvidia-cdi-refresh.service"], timeout=60)
+            unbound = [path for path in devices if not (path / "driver").is_symlink() or Path(os.readlink(path / "driver")).name != "nvidia"]
+        self.report("nvidia-driver", "drift" if unbound else "match", "NVIDIA GPU not bound to nvidia" if unbound else None)
+
+    def nvidia(self):
+        devices = self.nvidia_devices()
+        self.nvidia_enabled = bool(devices)
+        if not devices:
+            return
+        key_changed = self.atomic_file(NVIDIA_KEY, self.desired(NVIDIA_KEY).read_bytes(), 0o644)
+        source_changed = self.atomic_file(NVIDIA_SOURCE, NVIDIA_SOURCE_CONTENT, 0o644)
+        rules_changed = self.atomic_file(NVIDIA_RULES, read_text(self.desired(NVIDIA_RULES_TEMPLATE)), 0o644)
+        self.report("nvidia-repository", "drift" if self.check and (key_changed or source_changed) else "match")
+        self.report("nvidia-udev", "drift" if self.check and rules_changed else "match")
+        if rules_changed and not self.check:
+            self.command(["udevadm", "control", "--reload-rules"])
+        running = read_text(self.target("/proc/sys/kernel/osrelease")).strip()
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+-[0-9]+-[a-z0-9-]+", running):
+            raise PolicyError("running kernel release unsupported")
+        required = list(self.policy["packages"]["nvidia"])
+        modules = next(package.removesuffix("generic") for package in required if re.fullmatch(r"linux-modules-nvidia-[0-9]+-server-generic", package))
+        required.append(modules + running)
+        absent = self.missing_packages(required)
+        installed = bool(absent and not self.check)
+        self.install_packages(absent, update=source_changed or key_changed)
+        if installed:
+            self.command(["update-initramfs", "-u", "-k", "all"], timeout=900)
+            absent = self.missing_packages(required)
+        self.report("nvidia-packages", "drift" if absent else "match", "required NVIDIA packages missing" if absent else None)
+        if not self.nvidia_kernel_network(running):
+            return
+        self.nvidia_driver(devices, rules_changed)
+
+    def nvidia_runtime_registered(self):
+        path = self.target("/var/lib/rancher/k3s/agent/etc/containerd/config.toml")
+        if not path.exists():
+            return False
+        return bool(re.search(r"""(?m)^\s*\[plugins\.(?:'io\.containerd\.(?:cri\.v1\.runtime|grpc\.v1\.cri)'|"io\.containerd\.(?:cri\.v1\.runtime|grpc\.v1\.cri)")\.containerd\.runtimes\.(?:'nvidia'|"nvidia"|nvidia)\]\s*$""", read_text(path)))
 
     def accounts(self):
         desired = self.policy["users"]["pi"]
@@ -1035,6 +1153,8 @@ class Reconciler:
         newer = any(path.stat().st_mtime > self.process_start(pid) for path in paths)
         if self.ha_changed or newer or not policy_matches(live):
             restart_reason = restart_reason or "managed HA or argument configuration newer than running K3s"
+        if self.nvidia_enabled and self.target("/usr/bin/nvidia-container-runtime").is_file() and not self.nvidia_runtime_registered():
+            restart_reason = "NVIDIA container runtime requires K3s registration"
         kubeconfig = "/etc/rancher/k3s/k3s.yaml" if self.role == "server" else "/var/lib/rancher/k3s/agent/kubelet.kubeconfig"
         hostname = socket.gethostname().split(".", 1)[0]
         ready = self.command(["k3s", "kubectl", "--kubeconfig", kubeconfig, "get", "node", hostname, "-o", "json", "--request-timeout=10s"], timeout=15, required=False)
@@ -1890,6 +2010,7 @@ class Reconciler:
         stages = (
             ("root-lock-expiry", self.root_account),
             ("managed-files", self.assets), ("apt", self.apt), ("packages", self.packages),
+            ("nvidia", self.nvidia),
             ("accounts", self.accounts), ("timezone", self.timezone), ("swap", self.swap),
             ("sysctls", self.sysctls), ("systemd", self.systemd), ("oom", self.oom),
             ("tailscale", self.tailscale), ("multipath", self.multipath),

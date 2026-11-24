@@ -69,6 +69,7 @@ validate_node_policy() {
     (.users.pi.groups | type == "array" and length > 0 and all(type == "string")) and
     (.packages.common | type == "array" and length > 0 and all(type == "string")) and
     (.packages.physical | type == "array" and length > 0 and all(type == "string")) and
+    (.packages.nvidia | type == "array" and length > 0 and all(type == "string")) and
     (.apt.package_update | type == "boolean") and
     (.apt.package_upgrade | type == "boolean") and
     (.apt.conf | type == "object" and length > 0 and all(.[]; type == "string")) and
